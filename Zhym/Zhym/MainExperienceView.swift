@@ -62,6 +62,7 @@ struct TodayScreen: View {
     @EnvironmentObject private var appState: AppState
     let onBeginSession: () -> Void
     @State private var activeGuide: ExerciseGuide?
+    @State private var showingCheckIn = false
 
     var body: some View {
         ScrollView {
@@ -75,11 +76,16 @@ struct TodayScreen: View {
                     nutrition: appState.nutritionPlan,
                     adjustment: appState.weeklyAdjustment,
                     lastLog: appState.workoutLogs.first,
+                    profile: appState.activeProfile,
                     beginSession: onBeginSession,
                     viewGuide: { guide in
                         activeGuide = guide
                     }
                 )
+
+                DisciplineScoreCard(score: appState.disciplineScore, fatigueAdvisory: appState.fatigueAdvisory) {
+                    showingCheckIn = true
+                }
 
                 if let plan = appState.nutritionPlan {
                     CalorieStatusCard(plan: plan)
@@ -99,6 +105,10 @@ struct TodayScreen: View {
         .sheet(item: $activeGuide) { guide in
             ExerciseGuideSheet(guide: guide)
         }
+        .sheet(isPresented: $showingCheckIn) {
+            DisciplineCheckInSheet()
+                .environmentObject(appState)
+        }
     }
 }
 
@@ -107,6 +117,7 @@ private struct TodayCard: View {
     let nutrition: NutritionPlan?
     let adjustment: WeeklyAdjustment?
     let lastLog: WorkoutLog?
+    let profile: ZhymUserProfile?
     let beginSession: () -> Void
     let viewGuide: (ExerciseGuide) -> Void
 
@@ -146,6 +157,19 @@ private struct TodayCard: View {
                 Text("Last session \(relativeString(log.completedAt)) — \(log.sessionName)")
                     .font(ZhymTypography.label(13))
                     .foregroundStyle(ZhymPalette.accent)
+            }
+
+            if let profile {
+                if profile.trainingPreferences.constraints.accessMode == .access {
+                    Text("Access Mode — bodyweight, backpack-friendly loads")
+                        .font(ZhymTypography.label(13))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
+                if profile.trainingPreferences.isYouthAthlete {
+                    Text("Youth protocol — technique and recovery prioritised")
+                        .font(ZhymTypography.label(13))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
             }
 
             if session == nil {
@@ -202,6 +226,40 @@ private struct RecoveryBlock: View {
             Text(detail)
                 .font(ZhymTypography.label(13))
                 .foregroundStyle(ZhymPalette.accent)
+        }
+        .zhymCard()
+    }
+}
+
+private struct DisciplineScoreCard: View {
+    let score: Int
+    let fatigueAdvisory: String?
+    let checkInAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Discipline score")
+                        .font(ZhymTypography.label(14))
+                        .foregroundStyle(ZhymPalette.accent)
+                    Text(score == 0 ? "Awaiting check-in" : "\(score)")
+                        .font(ZhymTypography.display(34))
+                        .foregroundStyle(.white)
+                }
+                Spacer()
+                Button("Daily check-in", action: checkInAction)
+                    .buttonStyle(.secondaryZhym)
+            }
+            Text("Structure builds mental resilience. Share your status so ZHYM adjusts without pressure.")
+                .font(ZhymTypography.label(13))
+                .foregroundStyle(ZhymPalette.accent)
+
+            if let fatigueAdvisory {
+                Text(fatigueAdvisory)
+                    .font(ZhymTypography.label(14))
+                    .foregroundStyle(ZhymPalette.warning)
+            }
         }
         .zhymCard()
     }
@@ -599,6 +657,53 @@ private struct ExerciseGuideSheet: View {
     }
 }
 
+private struct DisciplineCheckInSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var completedTraining: Bool = true
+    @State private var energyLevel: Double = 6
+    @State private var sleepQuality: Double = 6
+    @State private var stressLevel: Double = 4
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Daily check-in")
+                .font(ZhymTypography.display(30))
+                .foregroundStyle(.white)
+            Toggle("Training completed", isOn: $completedTraining)
+                .toggleStyle(SwitchToggleStyle(tint: ZhymPalette.platinum))
+
+            sliderBlock(title: "Energy", value: $energyLevel)
+            sliderBlock(title: "Sleep quality", value: $sleepQuality)
+            sliderBlock(title: "Stress", value: $stressLevel, reversed: true)
+
+            Button("Submit status") {
+                appState.recordDisciplineEntry(completedTraining: completedTraining, energyLevel: Int(energyLevel), sleepQuality: Int(sleepQuality), stressLevel: Int(stressLevel))
+                dismiss()
+            }
+            .buttonStyle(.primaryZhym)
+        }
+        .padding(24)
+        .background(ZhymPalette.charcoal.ignoresSafeArea())
+    }
+
+    private func sliderBlock(title: String, value: Binding<Double>, reversed: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(ZhymTypography.label(14))
+                    .foregroundStyle(ZhymPalette.accent)
+                Spacer()
+                Text(String(format: "%.0f", value.wrappedValue))
+                    .font(ZhymTypography.numeric(22))
+                    .foregroundStyle(.white)
+            }
+            Slider(value: value, in: 1...10, step: 1)
+                .tint(reversed ? ZhymPalette.warning : ZhymPalette.platinum)
+        }
+    }
+}
+
 // MARK: - FUEL
 
 struct FuelScreen: View {
@@ -762,6 +867,8 @@ struct ProgressScreen: View {
                 }
 
                 WorkoutHistoryView(logs: appState.workoutLogs)
+
+                HealthEducationStack()
             }
             .padding(24)
         }
@@ -862,6 +969,30 @@ private struct SetCompletionCard: View {
                 .tint(ZhymPalette.platinum)
         }
         .zhymCard()
+    }
+}
+
+private struct HealthEducationStack: View {
+    private let topics = HealthEducationTopic.demoTopics
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recovery intelligence")
+                .font(ZhymTypography.label(14))
+                .foregroundStyle(ZhymPalette.accent)
+            ForEach(topics) { topic in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(topic.title)
+                        .font(ZhymTypography.label(16))
+                        .foregroundStyle(.white)
+                    Text(topic.description)
+                        .font(ZhymTypography.label(14))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
+                .padding()
+                .background(RoundedRectangle(cornerRadius: 18).fill(ZhymPalette.graphite))
+            }
+        }
     }
 }
 
@@ -996,6 +1127,19 @@ private extension Array {
     }
 }
 
+private struct HealthEducationTopic: Identifiable {
+    let id = UUID()
+    let title: String
+    let description: String
+
+    static let demoTopics: [HealthEducationTopic] = [
+        HealthEducationTopic(title: "Progressive overload stays gradual", description: "Volume increases are capped at 10–15% weekly to protect joints and keep youth athletes safe."),
+        HealthEducationTopic(title: "Sleep funds adaptation", description: "Sleep quality below 6/10 triggers recovery emphasis so tissue repair stays ahead of training."),
+        HealthEducationTopic(title: "Protein supports growth", description: "Protein targets are set first to sustain muscle and hormone health even in Access Mode."),
+        HealthEducationTopic(title: "Rest prevents injury", description: "Deload weeks auto-inserted every 4th week or sooner when check-ins flag fatigue.")
+    ]
+}
+
 private let dayLabelFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1033,8 +1177,8 @@ private func targetSets(for plan: TrainingPlan?) -> Int {
 
 #Preview {
     let metrics = UserMetrics(heightCm: 180, weightKg: 82, experience: .advanced)
-    let constraints = ConstraintSummary(sessionsPerWeek: 5, equipment: .gym, dietaryRule: .none)
-    let preferences = TrainingPreferences(objective: .strength, constraints: constraints)
+    let constraints = ConstraintSummary(sessionsPerWeek: 5, equipment: .gym, dietaryRule: .none, accessMode: .standard)
+    let preferences = TrainingPreferences(objective: .strength, constraints: constraints, isYouthAthlete: false)
     let profile = ZhymUserProfile(metrics: metrics, preferences: preferences)
     let appState = AppState()
     appState.configureProfile(profile)

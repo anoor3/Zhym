@@ -34,6 +34,22 @@ enum DietaryRule: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+enum AccessMode: String, CaseIterable, Identifiable, Codable {
+    case standard = "Standard"
+    case access = "Access Mode"
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .standard:
+            return "Full gym or mixed equipment"
+        case .access:
+            return "Bodyweight + small space"
+        }
+    }
+}
+
 struct UserMetrics: Codable {
     var heightCm: Double
     var weightKg: Double
@@ -43,12 +59,14 @@ struct UserMetrics: Codable {
 struct TrainingPreferences: Codable {
     var objective: TrainingObjective
     var constraints: ConstraintSummary
+    var isYouthAthlete: Bool
 }
 
 struct ConstraintSummary: Codable {
     var sessionsPerWeek: Int
     var equipment: TrainingConstraint
     var dietaryRule: DietaryRule
+    var accessMode: AccessMode
 }
 
 struct ZhymUserProfile: Identifiable, Codable {
@@ -73,6 +91,9 @@ final class AppState: ObservableObject {
     @Published var weeklyAdjustment: WeeklyAdjustment?
     @Published var workoutLogs: [WorkoutLog] = []
     @Published var activeSessionIndex: Int = 0
+    @Published var disciplineEntries: [DisciplineEntry] = []
+    @Published var disciplineScore: Int = 0
+    @Published var fatigueAdvisory: String?
     private let planRepository = PlanRepository()
     private let storageKey = "zhym.profile"
 
@@ -97,6 +118,9 @@ final class AppState: ObservableObject {
         currentDaySummary = .placeholder
         workoutLogs.removeAll()
         activeSessionIndex = 0
+        disciplineEntries.removeAll()
+        disciplineScore = 0
+        fatigueAdvisory = nil
         UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
@@ -107,6 +131,15 @@ final class AppState: ObservableObject {
         if workoutLogs.count > 20 {
             workoutLogs.removeLast()
         }
+        updateFatigueAdvisory()
+    }
+
+    func recordDisciplineEntry(completedTraining: Bool, energyLevel: Int, sleepQuality: Int, stressLevel: Int) {
+        let entry = DisciplineEntry(date: Date(), completedTraining: completedTraining, energyLevel: energyLevel, sleepQuality: sleepQuality, stressLevel: stressLevel)
+        disciplineEntries.removeAll { Calendar.current.isDate($0.date, inSameDayAs: entry.date) }
+        disciplineEntries.append(entry)
+        updateDisciplineScore()
+        updateFatigueAdvisory()
     }
 
     private func applyProfile(_ profile: ZhymUserProfile) {
@@ -116,11 +149,14 @@ final class AppState: ObservableObject {
         nutritionPlan = payload.1
         weeklyAdjustment = payload.2
         activeSessionIndex = 0
+        disciplineEntries.removeAll()
+        disciplineScore = 0
         currentDaySummary = DaySummary(
             workoutTitle: payload.0.sessions.first?.name ?? "Rest",
             caloriesRemaining: payload.1.calories,
             isRestDay: payload.0.sessions.isEmpty
         )
+        updateFatigueAdvisory()
     }
 
     private func persistProfile(_ profile: ZhymUserProfile) {
@@ -132,6 +168,47 @@ final class AppState: ObservableObject {
     private func loadProfile() -> ZhymUserProfile? {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
         return try? JSONDecoder().decode(ZhymUserProfile.self, from: data)
+    }
+
+    private func updateDisciplineScore() {
+        guard !disciplineEntries.isEmpty else {
+            disciplineScore = 0
+            return
+        }
+        let recent = disciplineEntries.filter { entry in
+            guard let days = Calendar.current.dateComponents([.day], from: entry.date, to: Date()).day else { return false }
+            return days < 7
+        }
+        guard !recent.isEmpty else {
+            disciplineScore = 0
+            return
+        }
+        let completionPoints = recent.reduce(0) { partial, entry in
+            partial + (entry.completedTraining ? 3 : 0) + entry.energyLevel + entry.sleepQuality - entry.stressLevel
+        }
+        disciplineScore = max(0, min(100, completionPoints / recent.count))
+    }
+
+    private func updateFatigueAdvisory() {
+        guard let profile = activeProfile else {
+            fatigueAdvisory = nil
+            return
+        }
+        let calendar = Calendar.current
+        let consecutiveMisses = (0..<3).allSatisfy { offset in
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: Date()) else { return false }
+            return !workoutLogs.contains { calendar.isDate($0.completedAt, inSameDayAs: day) }
+        }
+        let lowEntries = disciplineEntries.suffix(3).filter { $0.energyLevel <= 4 || $0.sleepQuality <= 4 || $0.stressLevel >= 7 }
+        if consecutiveMisses || !lowEntries.isEmpty {
+            if fatigueAdvisory == nil, var plan = trainingPlan {
+                plan = SafeBeginnerLayer.applyDeload(to: plan)
+                trainingPlan = plan
+            }
+            fatigueAdvisory = "System suggests recovery emphasis. Volume moderated for safety."
+        } else {
+            fatigueAdvisory = nil
+        }
     }
 }
 
@@ -150,6 +227,15 @@ struct WorkoutLog: Identifiable {
     let completedAt: Date
     let totalExercises: Int
     let totalSets: Int
+}
+
+struct DisciplineEntry: Identifiable {
+    let id = UUID()
+    let date: Date
+    let completedTraining: Bool
+    let energyLevel: Int
+    let sleepQuality: Int
+    let stressLevel: Int
 }
 
 enum TrainingSplit: String, Identifiable {

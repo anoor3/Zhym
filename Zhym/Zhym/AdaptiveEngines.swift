@@ -4,18 +4,26 @@ enum AdaptiveTrainingEngine {
     static func generatePlan(for profile: ZhymUserProfile, weekNumber: Int = 1, previous: TrainingPlan? = nil) -> TrainingPlan {
         let constraints = profile.trainingPreferences.constraints
         let sessions = constraints.sessionsPerWeek
-        let split = determineSplit(experience: profile.metrics.experience, sessions: sessions)
-        let templates = DeterministicWorkoutBuilder.build(split: split, sessions: sessions, objective: profile.trainingPreferences.objective)
+        let split = determineSplit(experience: profile.metrics.experience, sessions: sessions, mode: constraints.accessMode)
+        let baseTemplates: [WorkoutSession]
+        if constraints.accessMode == .access {
+            baseTemplates = AccessWorkoutBuilder.build(sessions: sessions)
+        } else {
+            baseTemplates = DeterministicWorkoutBuilder.build(split: split, sessions: sessions, objective: profile.trainingPreferences.objective)
+        }
+
+        let safeSessions = SafeBeginnerLayer.apply(to: baseTemplates, profile: profile, weekNumber: weekNumber)
 
         return TrainingPlan(
             week: weekNumber,
             split: split,
-            sessions: templates,
+            sessions: safeSessions,
             createdAt: .now
         )
     }
 
-    private static func determineSplit(experience: TrainingExperience, sessions: Int) -> TrainingSplit {
+    private static func determineSplit(experience: TrainingExperience, sessions: Int, mode: AccessMode) -> TrainingSplit {
+        if mode == .access { return .fullBody }
         switch sessions {
         case 3:
             return experience == .advanced ? .pushPullLegs : .fullBody
@@ -40,7 +48,7 @@ enum NutritionEngine {
         case .muscle:
             calories += 200
         case .fatLoss:
-            calories -= 300
+            calories -= profile.trainingPreferences.constraints.accessMode == .access ? 200 : 300
         case .strength:
             calories += 100
         case .balance:
@@ -49,6 +57,11 @@ enum NutritionEngine {
 
         if let adjustment = adjustment {
             calories += adjustment.calorieAdjustment
+        }
+
+        if profile.metrics.experience == .beginner || profile.trainingPreferences.isYouthAthlete {
+            let floorCalories = Int((bmr * 1.2).rounded())
+            calories = max(calories, floorCalories)
         }
 
         let protein = Int((weightKg * 2.2).rounded())
@@ -191,6 +204,93 @@ private enum DeterministicWorkoutBuilder {
         case .balance:
             return "Balanced — " + primary
         }
+    }
+}
+
+private enum AccessWorkoutBuilder {
+    static func build(sessions: Int) -> [WorkoutSession] {
+        let routine = [
+            WorkoutSession(name: "Access Flow A", focus: "Space-efficient strength", exercises: [
+                ExercisePrescription(name: "Tempo Push-up", sets: 3, reps: "10", intent: "Control", restSeconds: 60),
+                ExercisePrescription(name: "Backpack Row", sets: 3, reps: "12", intent: "Stability", restSeconds: 75),
+                ExercisePrescription(name: "Split Squat (Bodyweight)", sets: 3, reps: "10/side", intent: "Balance", restSeconds: 60)
+            ]),
+            WorkoutSession(name: "Access Flow B", focus: "Mobility + Core", exercises: [
+                ExercisePrescription(name: "Glute Bridge", sets: 3, reps: "12", intent: "Activation", restSeconds: 60),
+                ExercisePrescription(name: "Plank Reach", sets: 3, reps: "30s", intent: "Core", restSeconds: 45),
+                ExercisePrescription(name: "Lateral Lunge", sets: 3, reps: "8/side", intent: "Control", restSeconds: 60)
+            ]),
+            WorkoutSession(name: "Access Flow C", focus: "Aerobic discipline", exercises: [
+                ExercisePrescription(name: "March + Knee Drive", sets: 3, reps: "45s", intent: "Capacity", restSeconds: 30),
+                ExercisePrescription(name: "Backpack Overhead Press", sets: 3, reps: "10", intent: "Strength", restSeconds: 75),
+                ExercisePrescription(name: "Quadruped Hold", sets: 3, reps: "40s", intent: "Stability", restSeconds: 45)
+            ])
+        ]
+
+        if sessions <= 3 { return Array(routine.prefix(sessions)) }
+        return routine + routine.prefix(max(0, sessions - routine.count))
+    }
+}
+
+enum SafeBeginnerLayer {
+    static func apply(to sessions: [WorkoutSession], profile: ZhymUserProfile, weekNumber: Int) -> [WorkoutSession] {
+        var adjusted = sessions.map { session -> WorkoutSession in
+            let safeExercises = session.exercises.map { exercise -> ExercisePrescription in
+                var sets = exercise.sets
+                if profile.metrics.experience == .beginner || profile.trainingPreferences.isYouthAthlete {
+                    sets = max(2, exercise.sets - 1)
+                }
+                return ExercisePrescription(name: exercise.name, sets: sets, reps: exercise.reps, intent: exercise.intent, restSeconds: min(120, exercise.restSeconds))
+            }
+            return WorkoutSession(name: session.name, focus: safetyFocus(for: session.focus, profile: profile), exercises: safeExercises)
+        }
+
+        if shouldInsertDeload(weekNumber: weekNumber, profile: profile) {
+            adjusted = applyDeloadSessions(adjusted)
+        }
+
+        if profile.trainingPreferences.isYouthAthlete {
+            adjusted = adjusted.map { session in
+                let filtered = session.exercises.filter { !$0.name.lowercased().contains("deadlift") && !$0.name.lowercased().contains("clean") }
+                return WorkoutSession(name: session.name + " • Youth", focus: session.focus + " — movement quality", exercises: filtered.isEmpty ? session.exercises : filtered)
+            }
+        }
+
+        return adjusted
+    }
+
+    static func applyDeload(to plan: TrainingPlan) -> TrainingPlan {
+        let reduced = plan.sessions.map { session in
+            WorkoutSession(name: session.name + " (Deload)", focus: session.focus, exercises: session.exercises.map { exercise in
+                ExercisePrescription(name: exercise.name, sets: max(1, exercise.sets - 1), reps: exercise.reps, intent: exercise.intent, restSeconds: exercise.restSeconds)
+            })
+        }
+        return TrainingPlan(week: plan.week, split: plan.split, sessions: reduced, createdAt: plan.createdAt)
+    }
+
+    private static func shouldInsertDeload(weekNumber: Int, profile: ZhymUserProfile) -> Bool {
+        profile.metrics.experience == .beginner || profile.trainingPreferences.isYouthAthlete || weekNumber % 4 == 0
+    }
+
+    private static func applyDeloadSessions(_ sessions: [WorkoutSession]) -> [WorkoutSession] {
+        sessions.map { session in
+            WorkoutSession(name: session.name + " • Recovery", focus: session.focus + " — reduced load", exercises: session.exercises.map { exercise in
+                ExercisePrescription(name: exercise.name, sets: max(1, exercise.sets - 1), reps: exercise.reps, intent: exercise.intent, restSeconds: exercise.restSeconds)
+            })
+        }
+    }
+
+    private static func safetyFocus(for focus: String, profile: ZhymUserProfile) -> String {
+        if profile.trainingPreferences.constraints.accessMode == .access {
+            return "Safe space training — " + focus
+        }
+        if profile.trainingPreferences.isYouthAthlete {
+            return "Youth-safe — " + focus
+        }
+        if profile.metrics.experience == .beginner {
+            return "Technique-first — " + focus
+        }
+        return focus
     }
 }
 

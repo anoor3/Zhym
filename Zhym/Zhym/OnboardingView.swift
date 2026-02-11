@@ -33,6 +33,8 @@ struct OnboardingView: View {
     @State private var sessionsPerWeek: Int = 5
     @State private var equipment: TrainingConstraint = .gym
     @State private var dietaryRule: DietaryRule = .none
+    @State private var accessMode: AccessMode = .standard
+    @State private var isYouthAthlete: Bool = false
 
     private var canAdvance: Bool { true }
 
@@ -166,6 +168,22 @@ struct OnboardingView: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
+                Text("Access mode")
+                    .font(ZhymTypography.label(16))
+                    .foregroundStyle(ZhymPalette.accent)
+                Picker("Access mode", selection: $accessMode) {
+                    ForEach(AccessMode.allCases) { mode in
+                        Text(mode.rawValue)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(accessMode.description)
+                    .font(ZhymTypography.label(14))
+                    .foregroundStyle(ZhymPalette.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Dietary rules")
                     .font(ZhymTypography.label(16))
                     .foregroundStyle(ZhymPalette.accent)
@@ -173,6 +191,18 @@ struct OnboardingView: View {
                     dietaryRule = selected
                 }
             }
+
+            Toggle(isOn: $isYouthAthlete) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Youth Athlete (13–18)")
+                        .font(ZhymTypography.label(16))
+                        .foregroundStyle(.white)
+                    Text("Movement quality, recovery education, moderated loading")
+                        .font(ZhymTypography.label(13))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
+            }
+            .toggleStyle(SwitchToggleStyle(tint: ZhymPalette.platinum))
         }
     }
 
@@ -232,8 +262,8 @@ struct OnboardingView: View {
     private func next() {
         if stage == .constraints {
             let metrics = UserMetrics(heightCm: height, weightKg: weight, experience: experience)
-            let constraints = ConstraintSummary(sessionsPerWeek: sessionsPerWeek, equipment: equipment, dietaryRule: dietaryRule)
-            let preferences = TrainingPreferences(objective: objective, constraints: constraints)
+            let constraints = ConstraintSummary(sessionsPerWeek: sessionsPerWeek, equipment: equipment, dietaryRule: dietaryRule, accessMode: accessMode)
+            let preferences = TrainingPreferences(objective: objective, constraints: constraints, isYouthAthlete: isYouthAthlete)
             let profile = ZhymUserProfile(metrics: metrics, preferences: preferences)
             appState.configureProfile(profile)
             return
