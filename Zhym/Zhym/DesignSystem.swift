@@ -1,34 +1,29 @@
 import SwiftUI
 
 enum ZhymPalette {
-    static let night = Color(red: 4/255, green: 6/255, blue: 12/255)
-    static let abyss = Color(red: 12/255, green: 15/255, blue: 24/255)
-    static let slate = Color(red: 22/255, green: 27/255, blue: 38/255)
-    static let aurora = Color(red: 64/255, green: 206/255, blue: 199/255)
-    static let ember = Color(red: 252/255, green: 198/255, blue: 112/255)
-    static let quartz = Color(red: 165/255, green: 176/255, blue: 198/255)
-    static let wine = Color(red: 65/255, green: 18/255, blue: 39/255)
+    static let night = Color(red: 7/255, green: 9/255, blue: 16/255)
+    static let abyss = Color(red: 15/255, green: 19/255, blue: 28/255)
+    static let slate = Color(red: 24/255, green: 30/255, blue: 40/255)
+    static let aurora = Color(red: 70/255, green: 182/255, blue: 194/255)
+    static let wine = Color(red: 52/255, green: 15/255, blue: 34/255)
+    static let ember = Color(red: 248/255, green: 206/255, blue: 120/255)
+    static let quartz = Color(red: 170/255, green: 181/255, blue: 199/255)
     static let success = Color(red: 118/255, green: 207/255, blue: 165/255)
     static let warning = Color(red: 255/255, green: 120/255, blue: 94/255)
 
     static let background = night
     static let surface = slate
     static let card = abyss
-    static let overlay = slate.opacity(0.7)
+    static let overlay = slate.opacity(0.6)
     static let highlight = ember
     static let accent = quartz
-    static let blueAccent = aurora
     static let charcoal = night
     static let graphite = slate
-    static let obsidian = abyss
     static let platinum = ember
+    static let blueAccent = aurora
 
-    static func gradientPrimary() -> LinearGradient {
-        LinearGradient(colors: [Color(red: 0.12, green: 0.18, blue: 0.4), Color(red: 0.05, green: 0.06, blue: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    static func gradientHighlight() -> LinearGradient {
-        LinearGradient(colors: [ember, aurora.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+    static func primaryGradient() -> LinearGradient {
+        LinearGradient(colors: [Color(red: 0.12, green: 0.14, blue: 0.2), Color(red: 0.05, green: 0.06, blue: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
 
@@ -73,7 +68,7 @@ struct ZhymGlowBorder: ViewModifier {
         content
             .overlay(
                 RoundedRectangle(cornerRadius: 28)
-                    .stroke(ZhymPalette.gradientHighlight().opacity(0.4), lineWidth: 1.2)
+                    .stroke(ZhymPalette.highlight.opacity(0.4), lineWidth: 1.2)
                     .blur(radius: 4)
             )
     }
@@ -122,7 +117,7 @@ struct ZhymButtonStyle: ButtonStyle {
 
     private var buttonBackground: AnyShapeStyle {
         if variant == .primary {
-            return AnyShapeStyle(ZhymPalette.gradientHighlight())
+            return AnyShapeStyle(ZhymPalette.highlight)
         } else {
             return AnyShapeStyle(Color.clear)
         }

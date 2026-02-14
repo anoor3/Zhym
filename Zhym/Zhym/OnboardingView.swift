@@ -225,7 +225,7 @@ struct OnboardingView: View {
 
     private func optionGrid<T: Identifiable & RawRepresentable>(options: [T], selection: T, onSelect: @escaping (T) -> Void) -> some View where T.RawValue == String {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-            ForEach(options) { item in
+            ForEach(options, id: \.id) { item in
                 let isSelected = item.id == selection.id
                 Button {
                     onSelect(item)

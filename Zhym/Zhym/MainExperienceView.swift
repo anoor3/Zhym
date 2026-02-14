@@ -118,12 +118,12 @@ struct TodayScreen: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 32) {
+            VStack(alignment: .leading, spacing: 28) {
                 HeroPlanHeader(
                     profileName: profile?.trainingPreferences.objective.rawValue ?? "Zhym Program",
-                    weekText: plan != nil ? "Week \(plan!.week)" : "Calibration",
+                    weekText: plan != nil ? "Week \(plan!.week)" : "Calibrating",
                     sessionTitle: session?.name ?? "Recovery Day",
-                    highlight: session?.focus ?? "Embrace movement",
+                    highlight: session?.focus ?? "Intentional movement",
                     openAction: { action in activeHeroAction = action },
                     startSession: {
                         appState.activeSessionIndex = previewSessionIndex
@@ -162,11 +162,11 @@ struct TodayScreen: View {
                     EmptySessionPlaceholder()
                 }
 
-                DualCardStack {
+                VStack(spacing: 18) {
                     ConsistencyCard(score: appState.disciplineScore, fatigueNotice: appState.fatigueAdvisory) {
                         showingCheckIn = true
                     }
-                } second: {
+
                     if let plan = appState.nutritionPlan {
                         NutritionPulseCard(plan: plan)
                     } else {
@@ -179,10 +179,7 @@ struct TodayScreen: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 28)
         }
-        .background(
-            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.wine.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
-        )
+        .background(ZhymPalette.background.ignoresSafeArea())
         .sheet(item: $activeGuide) { guide in
             ExerciseGuideSheet(guide: guide)
         }
@@ -491,7 +488,7 @@ private struct HeroPlanHeader: View {
                         .font(ZhymTypography.label(15, weight: .semibold))
                         .padding(.vertical, 10)
                         .padding(.horizontal, 18)
-                        .background(ZhymPalette.gradientHighlight())
+                        .background(ZhymPalette.highlight)
                         .foregroundStyle(Color.black)
                         .clipShape(Capsule())
                 }
@@ -517,7 +514,7 @@ private struct SessionShowcase: View {
         VStack(alignment: .leading, spacing: 18) {
             ZStack(alignment: .bottomLeading) {
                 RoundedRectangle(cornerRadius: 26)
-                    .fill(ZhymPalette.gradientPrimary())
+                    .fill(ZhymPalette.primaryGradient())
                     .frame(height: 220)
                     .overlay(
                         RoundedRectangle(cornerRadius: 26)
