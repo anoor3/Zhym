@@ -1,75 +1,94 @@
 import SwiftUI
 
 enum ZhymPalette {
-    static let charcoal = Color(red: 9/255.0, green: 11/255.0, blue: 15/255.0)
-    static let graphite = Color(red: 19/255.0, green: 22/255.0, blue: 28/255.0)
-    static let obsidian = Color(red: 32/255.0, green: 36/255.0, blue: 44/255.0)
-    static let platinum = Color(red: 198/255.0, green: 205/255.0, blue: 210/255.0)
-    static let accent = Color(red: 134/255.0, green: 146/255.0, blue: 160/255.0)
-    static let warning = Color(red: 186/255.0, green: 79/255.0, blue: 62/255.0)
-    static let success = Color(red: 98/255.0, green: 165/255.0, blue: 120/255.0)
+    static let background = Color(red: 12/255, green: 17/255, blue: 29/255)
+    static let surface = Color(red: 21/255, green: 28/255, blue: 46/255)
+    static let card = Color(red: 27/255, green: 36/255, blue: 57/255)
+    static let overlay = Color(red: 35/255, green: 45/255, blue: 71/255)
+    static let highlight = Color(red: 247/255, green: 211/255, blue: 33/255)
+    static let blueAccent = Color(red: 72/255, green: 132/255, blue: 255/255)
+    static let muted = Color(red: 129/255, green: 145/255, blue: 184/255)
+    static let success = Color(red: 110/255, green: 206/255, blue: 127/255)
+    static let warning = Color(red: 242/255, green: 120/255, blue: 75/255)
+
+    // Legacy aliases while screens transition
+    static let charcoal = background
+    static let graphite = surface
+    static let obsidian = card
+    static let platinum = highlight
+    static let accent = muted
 }
 
 enum ZhymTypography {
     static func display(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .thin, design: .rounded)
+        .system(size: size, weight: .semibold, design: .rounded)
     }
 
     static func numeric(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .light, design: .monospaced)
+        .system(size: size, weight: .medium, design: .rounded)
     }
 
-    static func label(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .regular, design: .rounded)
+    static func label(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
     }
 }
 
-struct ZhymBackground: ViewModifier {
+struct ZhymCardBackground: ViewModifier {
+    var padding: CGFloat = 20
+
     func body(content: Content) -> some View {
         content
-            .padding(24)
+            .padding(padding)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: [ZhymPalette.graphite, ZhymPalette.obsidian], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
+                    .fill(ZhymPalette.card)
                     .overlay(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(ZhymPalette.charcoal.opacity(0.4), lineWidth: 1)
+                            .stroke(ZhymPalette.overlay.opacity(0.35), lineWidth: 1)
                     )
             )
     }
 }
 
 extension View {
-    func zhymCard() -> some View {
-        modifier(ZhymBackground())
+    func zhymCard(padding: CGFloat = 20) -> some View {
+        modifier(ZhymCardBackground(padding: padding))
+    }
+
+    func zhymCapsule(background: Color = ZhymPalette.overlay, foreground: Color = ZhymPalette.muted) -> some View {
+        self
+            .font(ZhymTypography.label(13, weight: .medium))
+            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .background(Capsule().fill(background))
+            .foregroundStyle(foreground)
     }
 }
 
 struct ZhymButtonStyle: ButtonStyle {
-    let isPrimary: Bool
+    enum Variant { case primary, secondary }
+    let variant: Variant
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(ZhymTypography.label(18))
-            .foregroundStyle(isPrimary ? Color.black : ZhymPalette.platinum)
+            .font(ZhymTypography.label(17, weight: .semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
+            .foregroundStyle(variant == .primary ? Color.black : ZhymPalette.highlight)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isPrimary ? ZhymPalette.platinum : Color.clear)
+                    .fill(variant == .primary ? ZhymPalette.highlight : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(ZhymPalette.platinum.opacity(0.3), lineWidth: 1)
+                    .stroke(variant == .primary ? Color.clear : ZhymPalette.highlight.opacity(0.6), lineWidth: 1)
             )
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .animation(.spring(response: 0.4, dampingFraction: 0.9), value: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
 extension ButtonStyle where Self == ZhymButtonStyle {
-    static var primaryZhym: ZhymButtonStyle { ZhymButtonStyle(isPrimary: true) }
-    static var secondaryZhym: ZhymButtonStyle { ZhymButtonStyle(isPrimary: false) }
+    static var primaryZhym: ZhymButtonStyle { ZhymButtonStyle(variant: .primary) }
+    static var secondaryZhym: ZhymButtonStyle { ZhymButtonStyle(variant: .secondary) }
 }
