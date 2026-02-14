@@ -196,13 +196,13 @@ private enum DeterministicWorkoutBuilder {
     private static func emphasis(for objective: TrainingObjective, primary: String) -> String {
         switch objective {
         case .muscle:
-            return "Hypertrophy emphasis — " + primary
+            return "Hypertrophy emphasis - " + primary
         case .fatLoss:
-            return "Output & density — " + primary
+            return "Output & density - " + primary
         case .strength:
-            return "Force priority — " + primary
+            return "Force priority - " + primary
         case .balance:
-            return "Balanced — " + primary
+            return "Balanced - " + primary
         }
     }
 }
@@ -252,7 +252,7 @@ enum SafeBeginnerLayer {
         if profile.trainingPreferences.isYouthAthlete {
             adjusted = adjusted.map { session in
                 let filtered = session.exercises.filter { !$0.name.lowercased().contains("deadlift") && !$0.name.lowercased().contains("clean") }
-                return WorkoutSession(name: session.name + " • Youth", focus: session.focus + " — movement quality", exercises: filtered.isEmpty ? session.exercises : filtered)
+                return WorkoutSession(name: session.name + " • Youth", focus: session.focus + " - movement quality", exercises: filtered.isEmpty ? session.exercises : filtered)
             }
         }
 
@@ -274,7 +274,7 @@ enum SafeBeginnerLayer {
 
     private static func applyDeloadSessions(_ sessions: [WorkoutSession]) -> [WorkoutSession] {
         sessions.map { session in
-            WorkoutSession(name: session.name + " • Recovery", focus: session.focus + " — reduced load", exercises: session.exercises.map { exercise in
+            WorkoutSession(name: session.name + " • Recovery", focus: session.focus + " - reduced load", exercises: session.exercises.map { exercise in
                 ExercisePrescription(name: exercise.name, sets: max(1, exercise.sets - 1), reps: exercise.reps, intent: exercise.intent, restSeconds: exercise.restSeconds)
             })
         }
@@ -282,13 +282,13 @@ enum SafeBeginnerLayer {
 
     private static func safetyFocus(for focus: String, profile: ZhymUserProfile) -> String {
         if profile.trainingPreferences.constraints.accessMode == .access {
-            return "Safe space training — " + focus
+            return "Safe space training - " + focus
         }
         if profile.trainingPreferences.isYouthAthlete {
-            return "Youth-safe — " + focus
+            return "Youth-safe - " + focus
         }
         if profile.metrics.experience == .beginner {
-            return "Technique-first — " + focus
+            return "Technique-first - " + focus
         }
         return focus
     }

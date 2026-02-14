@@ -194,7 +194,7 @@ struct OnboardingView: View {
 
             Toggle(isOn: $isYouthAthlete) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Youth Athlete (13–18)")
+                    Text("Youth Athlete (13-18)")
                         .font(ZhymTypography.label(16))
                         .foregroundStyle(.white)
                     Text("Movement quality, recovery education, moderated loading")

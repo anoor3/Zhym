@@ -90,12 +90,20 @@ final class AppState: ObservableObject {
     @Published var nutritionPlan: NutritionPlan?
     @Published var weeklyAdjustment: WeeklyAdjustment?
     @Published var workoutLogs: [WorkoutLog] = []
-    @Published var activeSessionIndex: Int = 0
+    @Published var activeSessionIndex: Int = 0 {
+        didSet {
+            persistActiveSessionIndex()
+        }
+    }
     @Published var disciplineEntries: [DisciplineEntry] = []
     @Published var disciplineScore: Int = 0
     @Published var fatigueAdvisory: String?
     private let planRepository = PlanRepository()
     private let storageKey = "zhym.profile"
+    private let logsStorageKey = "zhym.workoutLogs"
+    private let disciplineStorageKey = "zhym.disciplineEntries"
+    private let activeSessionStorageKey = "zhym.activeSession"
+    private var isRestoringState = true
 
     var isOnboarded: Bool { activeProfile != nil }
 
@@ -103,6 +111,8 @@ final class AppState: ObservableObject {
         if let storedProfile = loadProfile() {
             applyProfile(storedProfile)
         }
+        loadPersistentState()
+        isRestoringState = false
     }
 
     func configureProfile(_ profile: ZhymUserProfile) {
@@ -119,9 +129,11 @@ final class AppState: ObservableObject {
         workoutLogs.removeAll()
         activeSessionIndex = 0
         disciplineEntries.removeAll()
+        persistDisciplineEntries()
         disciplineScore = 0
         fatigueAdvisory = nil
         UserDefaults.standard.removeObject(forKey: storageKey)
+        clearPersistentActivity()
     }
 
     func recordWorkout(session: WorkoutSession) {
@@ -132,6 +144,7 @@ final class AppState: ObservableObject {
             workoutLogs.removeLast()
         }
         updateFatigueAdvisory()
+        persistWorkoutLogs()
     }
 
     func recordDisciplineEntry(completedTraining: Bool, energyLevel: Int, sleepQuality: Int, stressLevel: Int) {
@@ -140,6 +153,7 @@ final class AppState: ObservableObject {
         disciplineEntries.append(entry)
         updateDisciplineScore()
         updateFatigueAdvisory()
+        persistDisciplineEntries()
     }
 
     private func applyProfile(_ profile: ZhymUserProfile) {
@@ -168,6 +182,23 @@ final class AppState: ObservableObject {
     private func loadProfile() -> ZhymUserProfile? {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
         return try? JSONDecoder().decode(ZhymUserProfile.self, from: data)
+    }
+
+    private func loadPersistentState() {
+        let defaults = UserDefaults.standard
+        if let logData = defaults.data(forKey: logsStorageKey),
+           let decodedLogs = try? JSONDecoder().decode([WorkoutLog].self, from: logData) {
+            workoutLogs = decodedLogs
+        }
+        if let disciplineData = defaults.data(forKey: disciplineStorageKey),
+           let decodedEntries = try? JSONDecoder().decode([DisciplineEntry].self, from: disciplineData) {
+            disciplineEntries = decodedEntries
+            updateDisciplineScore()
+        }
+        if let storedIndex = defaults.object(forKey: activeSessionStorageKey) as? Int {
+            activeSessionIndex = storedIndex
+        }
+        updateFatigueAdvisory()
     }
 
     private func updateDisciplineScore() {
@@ -210,6 +241,28 @@ final class AppState: ObservableObject {
             fatigueAdvisory = nil
         }
     }
+
+    private func persistWorkoutLogs() {
+        guard let encoded = try? JSONEncoder().encode(workoutLogs) else { return }
+        UserDefaults.standard.set(encoded, forKey: logsStorageKey)
+    }
+
+    private func persistDisciplineEntries() {
+        guard let encoded = try? JSONEncoder().encode(disciplineEntries) else { return }
+        UserDefaults.standard.set(encoded, forKey: disciplineStorageKey)
+    }
+
+    private func persistActiveSessionIndex() {
+        guard !isRestoringState else { return }
+        UserDefaults.standard.set(activeSessionIndex, forKey: activeSessionStorageKey)
+    }
+
+    private func clearPersistentActivity() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: logsStorageKey)
+        defaults.removeObject(forKey: disciplineStorageKey)
+        defaults.removeObject(forKey: activeSessionStorageKey)
+    }
 }
 
 struct DaySummary {
@@ -220,7 +273,7 @@ struct DaySummary {
     static let placeholder = DaySummary(workoutTitle: "Push | Neural Strength", caloriesRemaining: 1280, isRestDay: false)
 }
 
-struct WorkoutLog: Identifiable {
+struct WorkoutLog: Identifiable, Codable {
     let id = UUID()
     let sessionName: String
     let focus: String
@@ -229,7 +282,7 @@ struct WorkoutLog: Identifiable {
     let totalSets: Int
 }
 
-struct DisciplineEntry: Identifiable {
+struct DisciplineEntry: Identifiable, Codable {
     let id = UUID()
     let date: Date
     let completedTraining: Bool

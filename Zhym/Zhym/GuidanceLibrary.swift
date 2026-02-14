@@ -66,7 +66,7 @@ enum GuidanceLibrary {
                 intent: "Speed reserve",
                 cues: ["Drive through floor, finish tall", "Bar tracks close", "Meet bar softly in rack"],
                 breathing: "Inhale as you settle, hold through pull, exhale once caught",
-                safety: "Only load as technique allows — prioritize crisp triples.",
+                safety: "Only load as technique allows - prioritize crisp triples.",
                 mediaAsset: "power-clean"
             )
         ]

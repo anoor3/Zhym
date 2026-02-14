@@ -88,9 +88,13 @@ struct TodayScreen: View {
     let onBeginSession: () -> Void
     @State private var activeGuide: ExerciseGuide?
     @State private var showingCheckIn = false
+    @State private var activeHeroAction: HeroAction?
+    @State private var timelineAnchor: Date = Calendar.current.startOfDay(for: Date())
+    @State private var selectedDate: Date = Calendar.current.startOfDay(for: Date())
+    @State private var previewSessionIndex: Int = 0
 
     private var plan: TrainingPlan? { appState.trainingPlan }
-    private var session: WorkoutSession? { plan?.sessions[safe: appState.activeSessionIndex] }
+    private var session: WorkoutSession? { plan?.sessions[safe: previewSessionIndex] }
     private var profile: ZhymUserProfile? { appState.activeProfile }
 
     private var stats: [SessionStat] {
@@ -100,10 +104,9 @@ struct TodayScreen: View {
 
     private var timelineEntries: [TimelineEntry] {
         let calendar = Calendar.current
-        let start = calendar.date(byAdding: .day, value: -1, to: Date()) ?? Date()
         return (0..<7).map { offset in
-            let date = calendar.date(byAdding: .day, value: offset, to: start) ?? start
-            if calendar.isDateInToday(date) {
+            let date = calendar.date(byAdding: .day, value: offset, to: timelineAnchor) ?? timelineAnchor
+            if calendar.isDate(date, inSameDayAs: Date()) {
                 return TimelineEntry(date: date, status: .today)
             }
             if appState.workoutLogs.contains(where: { calendar.isDate($0.completedAt, inSameDayAs: date) }) {
@@ -115,49 +118,71 @@ struct TodayScreen: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
-                WorkoutToolbar(profileName: profile?.trainingPreferences.objective.rawValue ?? "Adaptive Plan")
-
-                DayTimelineView(entries: timelineEntries)
-
-                PlanOverviewCard(plan: plan, session: session, profile: profile, lastLog: appState.workoutLogs.first) {
-                    if let exercise = session?.exercises.first {
-                        activeGuide = GuidanceLibrary.guide(for: exercise.name)
+            VStack(alignment: .leading, spacing: 32) {
+                HeroPlanHeader(
+                    profileName: profile?.trainingPreferences.objective.rawValue ?? "Zhym Program",
+                    weekText: plan != nil ? "Week \(plan!.week)" : "Calibration",
+                    sessionTitle: session?.name ?? "Recovery Day",
+                    highlight: session?.focus ?? "Embrace movement",
+                    openAction: { action in activeHeroAction = action },
+                    startSession: {
+                        appState.activeSessionIndex = previewSessionIndex
+                        onBeginSession()
                     }
-                }
+                )
 
-                if !stats.isEmpty {
-                    SessionStatRow(stats: stats)
-                }
-
-                if session != nil {
-                    WarmupCard {
-                        activeGuide = GuidanceLibrary.guide(for: "General Warmup")
+                DayTimelineView(
+                    entries: timelineEntries,
+                    selectedDate: selectedDate,
+                    moveWeek: { shift in
+                        timelineAnchor = Calendar.current.date(byAdding: .day, value: shift * 7, to: timelineAnchor) ?? timelineAnchor
+                        timelineAnchor = Calendar.current.startOfDay(for: timelineAnchor)
+                    },
+                    selectDate: { date in
+                        let normalized = Calendar.current.startOfDay(for: date)
+                        selectedDate = normalized
+                        updatePreviewSession(for: normalized)
+                        ensureDateVisible(normalized)
                     }
-                }
+                )
 
                 if let session {
-                    ExerciseStack(session: session, viewGuide: { exercise in
-                        activeGuide = GuidanceLibrary.guide(for: exercise.name)
-                    }, startWorkout: {
-                        onBeginSession()
-                    })
+                    SessionShowcase(
+                        session: session,
+                        stats: stats,
+                        openGuide: { exercise in
+                            activeGuide = GuidanceLibrary.guide(for: exercise.name)
+                        },
+                        launch: {
+                            appState.activeSessionIndex = previewSessionIndex
+                            onBeginSession()
+                        }
+                    )
                 } else {
                     EmptySessionPlaceholder()
                 }
 
-                ConsistencyCard(score: appState.disciplineScore, fatigueNotice: appState.fatigueAdvisory) {
-                    showingCheckIn = true
+                DualCardStack {
+                    ConsistencyCard(score: appState.disciplineScore, fatigueNotice: appState.fatigueAdvisory) {
+                        showingCheckIn = true
+                    }
+                } second: {
+                    if let plan = appState.nutritionPlan {
+                        NutritionPulseCard(plan: plan)
+                    } else {
+                        GenerateNutritionPrompt()
+                    }
                 }
 
-                if let plan = appState.nutritionPlan {
-                    NutritionPulseCard(plan: plan)
-                }
+                RecoveryHighlights()
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 24)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 28)
         }
-        .background(ZhymPalette.background.ignoresSafeArea())
+        .background(
+            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.wine.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .ignoresSafeArea()
+        )
         .sheet(item: $activeGuide) { guide in
             ExerciseGuideSheet(guide: guide)
         }
@@ -165,11 +190,69 @@ struct TodayScreen: View {
             DisciplineCheckInSheet()
                 .environmentObject(appState)
         }
+        .sheet(item: $activeHeroAction) { action in
+            switch action {
+            case .schedule:
+                ScheduleSheet(plan: plan, anchor: timelineAnchor) { date in
+                    let normalized = Calendar.current.startOfDay(for: date)
+                    selectedDate = normalized
+                    updatePreviewSession(for: normalized)
+                    ensureDateVisible(normalized)
+                }
+                .presentationDetents([.medium])
+            case .adjust:
+                AdjustPlanSheet()
+                    .presentationDetents([.medium])
+            case .rewards:
+                RewardsSheet()
+                    .presentationDetents([.fraction(0.4)])
+            }
+        }
+        .onAppear {
+            previewSessionIndex = appState.activeSessionIndex
+            selectedDate = Calendar.current.startOfDay(for: Date())
+            timelineAnchor = selectedDate
+        }
+        .onChange(of: appState.activeSessionIndex) { _, newValue in
+            previewSessionIndex = newValue
+        }
+        .onChange(of: appState.trainingPlan?.id) { _, _ in
+            previewSessionIndex = appState.activeSessionIndex
+        }
     }
+}
+
+private extension TodayScreen {
+    func updatePreviewSession(for date: Date) {
+        guard let plan = appState.trainingPlan, !plan.sessions.isEmpty else { return }
+        let today = Calendar.current.startOfDay(for: Date())
+        let target = Calendar.current.startOfDay(for: date)
+        let offset = Calendar.current.dateComponents([.day], from: today, to: target).day ?? 0
+        let count = plan.sessions.count
+        let normalized = ((appState.activeSessionIndex + offset) % count + count) % count
+        previewSessionIndex = normalized
+        ensureDateVisible(target)
+    }
+
+    func ensureDateVisible(_ date: Date) {
+        let start = timelineAnchor
+        guard let end = Calendar.current.date(byAdding: .day, value: 6, to: start) else { return }
+        if date < start {
+            timelineAnchor = date
+        } else if date > end {
+            timelineAnchor = Calendar.current.date(byAdding: .day, value: -6, to: date) ?? timelineAnchor
+        }
+    }
+}
+
+private enum ToolbarAction: String, Identifiable {
+    case rewards, calendar, filters
+    var id: String { rawValue }
 }
 
 private struct WorkoutToolbar: View {
     var profileName: String
+    var selectAction: (ToolbarAction) -> Void
 
     var body: some View {
         HStack(alignment: .center) {
@@ -189,9 +272,15 @@ private struct WorkoutToolbar: View {
             }
             Spacer()
             HStack(spacing: 12) {
-                ToolbarIconButton(systemName: "gift.fill", highlight: true)
-                ToolbarIconButton(systemName: "calendar")
-                ToolbarIconButton(systemName: "slider.horizontal.3")
+                ToolbarIconButton(systemName: "gift.fill", highlight: true) {
+                    selectAction(.rewards)
+                }
+                ToolbarIconButton(systemName: "calendar") {
+                    selectAction(.calendar)
+                }
+                ToolbarIconButton(systemName: "slider.horizontal.3") {
+                    selectAction(.filters)
+                }
             }
         }
     }
@@ -200,9 +289,10 @@ private struct WorkoutToolbar: View {
 private struct ToolbarIconButton: View {
     let systemName: String
     var highlight: Bool = false
+    let action: () -> Void
 
     var body: some View {
-        Button(action: {}) {
+        Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: 38, height: 38)
@@ -213,6 +303,375 @@ private struct ToolbarIconButton: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct RewardsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Text("Rewards")
+                .font(ZhymTypography.display(32))
+                .foregroundStyle(.white)
+            Text("Build streaks to unlock recovery kits, merch, and invite-only Zhym labs.")
+                .font(ZhymTypography.label(15))
+                .foregroundStyle(ZhymPalette.accent)
+                .multilineTextAlignment(.center)
+            Button("Close") { dismiss() }
+                .buttonStyle(.primaryZhym)
+        }
+        .padding(32)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+}
+
+private struct ScheduleSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let plan: TrainingPlan?
+    let anchor: Date
+    let selectDate: (Date) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Schedule")
+                .font(ZhymTypography.display(30))
+                .foregroundStyle(.white)
+            if let plan {
+                ForEach(Array(plan.sessions.enumerated()), id: \.offset) { pair in
+                    let index = pair.offset
+                    let session = pair.element
+                    Button {
+                        let date = Calendar.current.date(byAdding: .day, value: index, to: anchor) ?? anchor
+                        selectDate(date)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(dayLabel(for: index))
+                                    .font(ZhymTypography.label(13))
+                                    .foregroundStyle(ZhymPalette.accent)
+                                Text(session.name)
+                                    .font(ZhymTypography.label(16, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                Text(session.focus)
+                                    .font(ZhymTypography.label(13))
+                                    .foregroundStyle(ZhymPalette.accent)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(ZhymPalette.accent)
+                        }
+                        .padding()
+                        .background(RoundedRectangle(cornerRadius: 18).fill(ZhymPalette.surface))
+                    }
+                }
+            } else {
+                Text("Generate a plan to view your detailed schedule.")
+                    .font(ZhymTypography.label(15))
+                    .foregroundStyle(ZhymPalette.accent)
+            }
+            Button("Close") { dismiss() }
+                .buttonStyle(.secondaryZhym)
+        }
+        .padding(24)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+
+    private func dayLabel(for index: Int) -> String {
+        let date = Calendar.current.date(byAdding: .day, value: index, to: anchor) ?? anchor
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter.string(from: date)
+    }
+}
+
+private struct AdjustPlanSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var split: TrainingSplit = .pushPullLegs
+    @State private var sessionsPerWeek: Int = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Adjust Plan")
+                .font(ZhymTypography.display(30))
+                .foregroundStyle(.white)
+            Picker("Split", selection: $split) {
+                ForEach([TrainingSplit.pushPullLegs, .upperLower, .fullBody]) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Stepper("Sessions per week: \(sessionsPerWeek)", value: $sessionsPerWeek, in: 3...6)
+                .foregroundStyle(.white)
+
+            Button("Apply soon") {
+                dismiss()
+            }
+            .buttonStyle(.primaryZhym)
+        }
+        .padding(24)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+}
+
+private enum HeroAction: Identifiable {
+    case schedule, adjust, rewards
+    var id: String {
+        switch self {
+        case .schedule: return "schedule"
+        case .adjust: return "adjust"
+        case .rewards: return "rewards"
+        }
+    }
+}
+
+private struct HeroPlanHeader: View {
+    var profileName: String
+    var weekText: String
+    var sessionTitle: String
+    var highlight: String
+    var openAction: (HeroAction) -> Void
+    var startSession: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(profileName.uppercased())
+                        .font(ZhymTypography.label(12, weight: .medium))
+                        .foregroundStyle(ZhymPalette.accent.opacity(0.8))
+                        .tracking(3)
+                    Text(weekText)
+                        .font(ZhymTypography.label(16))
+                        .foregroundStyle(ZhymPalette.accent)
+                    Text(sessionTitle)
+                        .font(ZhymTypography.display(40))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    Text(highlight)
+                        .font(ZhymTypography.label(16))
+                        .foregroundStyle(ZhymPalette.aurora)
+                        .opacity(0.9)
+                }
+                Spacer()
+                VStack(spacing: 12) {
+                    Button {
+                        openAction(.rewards)
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .semibold))
+                            .padding(12)
+                            .background(Circle().fill(ZhymPalette.slate))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        openAction(.adjust)
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 18, weight: .semibold))
+                            .padding(12)
+                            .background(Circle().fill(ZhymPalette.slate))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    openAction(.schedule)
+                } label: {
+                    Label("Schedule", systemImage: "calendar")
+                        .zhymCapsule(background: ZhymPalette.slate.opacity(0.6), foreground: .white)
+                }
+                Button(action: startSession) {
+                    Text("Launch Session")
+                        .font(ZhymTypography.label(15, weight: .semibold))
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 18)
+                        .background(ZhymPalette.gradientHighlight())
+                        .foregroundStyle(Color.black)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(24)
+        .background(
+            LinearGradient(colors: [ZhymPalette.wine.opacity(0.8), ZhymPalette.abyss], startPoint: .topLeading, endPoint: .bottomTrailing)
+        )
+        .zhymGlowBorder()
+        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+}
+
+private struct SessionShowcase: View {
+    let session: WorkoutSession
+    let stats: [SessionStat]
+    let openGuide: (ExercisePrescription) -> Void
+    let launch: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ZStack(alignment: .bottomLeading) {
+                RoundedRectangle(cornerRadius: 26)
+                    .fill(ZhymPalette.gradientPrimary())
+                    .frame(height: 220)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 26)
+                            .stroke(ZhymPalette.aurora.opacity(0.3), lineWidth: 1)
+                    )
+                    .overlay(
+                        Image(systemName: "figure.strengthtraining.functional")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 160)
+                            .opacity(0.15)
+                            .offset(x: 80, y: -30),
+                        alignment: .topTrailing
+                    )
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(session.name)
+                        .font(ZhymTypography.display(32))
+                        .foregroundStyle(.white)
+                    Text(session.focus)
+                        .font(ZhymTypography.label(16))
+                        .foregroundStyle(ZhymPalette.accent)
+                    Button("Begin now", action: launch)
+                        .buttonStyle(.primaryZhym)
+                        .padding(.top, 8)
+                        .frame(maxWidth: 220)
+                }
+                .padding(24)
+            }
+
+            if !stats.isEmpty {
+                SessionStatRow(stats: stats)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(session.exercises.prefix(3))) { exercise in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(exercise.name)
+                                .font(ZhymTypography.label(16, weight: .semibold))
+                                .foregroundStyle(.white)
+                            Text("\(exercise.sets)x \(exercise.reps) · \(exercise.intent)")
+                                .font(ZhymTypography.label(13))
+                                .foregroundStyle(ZhymPalette.accent)
+                        }
+                        Spacer()
+                        Button {
+                            openGuide(exercise)
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(ZhymPalette.accent)
+                        }
+                    }
+                    .padding()
+                    .background(RoundedRectangle(cornerRadius: 18).fill(ZhymPalette.slate.opacity(0.6)))
+                }
+                if session.exercises.count > 3 {
+                    Text("+\(session.exercises.count - 3) more movements scripted")
+                        .font(ZhymTypography.label(13))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
+            }
+        }
+        .zhymCard()
+    }
+}
+
+private struct SessionStatRow: View {
+    let stats: [SessionStat]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ForEach(stats) { stat in
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: stat.icon)
+                        .foregroundStyle(ZhymPalette.ember)
+                    Text(stat.value)
+                        .font(ZhymTypography.display(26))
+                        .foregroundStyle(.white)
+                    Text(stat.label)
+                        .font(ZhymTypography.label(12))
+                        .foregroundStyle(ZhymPalette.accent)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 20).fill(ZhymPalette.slate.opacity(0.7)))
+            }
+        }
+    }
+}
+
+private struct DualCardStack<First: View, Second: View>: View {
+    let first: First
+    let second: Second
+
+    init(@ViewBuilder first: () -> First, @ViewBuilder second: () -> Second) {
+        self.first = first()
+        self.second = second()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            first
+                .frame(maxWidth: .infinity)
+            second
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private struct GenerateNutritionPrompt: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Nutrition intelligence")
+                .font(ZhymTypography.label(14))
+                .foregroundStyle(ZhymPalette.accent)
+            Text("Complete onboarding to unlock calorie prescriptions and chef-designed meals.")
+                .font(ZhymTypography.label(14))
+                .foregroundStyle(.white)
+        }
+        .zhymCard()
+    }
+}
+
+private struct RecoveryHighlights: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Recovery intelligence")
+                .font(ZhymTypography.label(14))
+                .foregroundStyle(ZhymPalette.accent)
+            HStack(spacing: 16) {
+                RecoveryTile(title: "Nervous system", value: "Prime", detail: "+4% vs last week")
+                RecoveryTile(title: "Sleep debit", value: "Low", detail: "6h 52m avg")
+            }
+        }
+    }
+
+    struct RecoveryTile: View {
+        let title: String
+        let value: String
+        let detail: String
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title.uppercased())
+                    .font(ZhymTypography.label(11))
+                    .foregroundStyle(ZhymPalette.accent)
+                Text(value)
+                    .font(ZhymTypography.display(26))
+                    .foregroundStyle(.white)
+                Text(detail)
+                    .font(ZhymTypography.label(12))
+                    .foregroundStyle(ZhymPalette.accent)
+            }
+            .zhymCard()
+        }
     }
 }
 
@@ -228,11 +687,11 @@ private enum TimelineStatus {
     var color: Color {
         switch self {
         case .completed:
-            return ZhymPalette.blueAccent
+            return ZhymPalette.aurora
         case .today:
-            return ZhymPalette.highlight
+            return ZhymPalette.ember
         case .upcoming:
-            return ZhymPalette.blueAccent.opacity(0.8)
+            return ZhymPalette.aurora.opacity(0.8)
         case .rest:
             return ZhymPalette.accent
         }
@@ -241,29 +700,64 @@ private enum TimelineStatus {
 
 private struct DayTimelineView: View {
     let entries: [TimelineEntry]
+    let selectedDate: Date
+    let moveWeek: (Int) -> Void
+    let selectDate: (Date) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(entries) { entry in
-                VStack(spacing: 6) {
-                    Text(dayLabelFormatter.string(from: entry.date).uppercased())
-                        .font(ZhymTypography.label(12, weight: entry.status == .today ? .semibold : .regular))
-                        .foregroundStyle(entry.status == .today ? .white : ZhymPalette.accent)
-                    Text(dayNumber(from: entry.date))
-                        .font(ZhymTypography.numeric(20))
-                        .foregroundStyle(entry.status.color)
-                    Circle()
-                        .fill(entry.status == .rest ? ZhymPalette.accent.opacity(0.3) : entry.status.color)
-                        .frame(width: 8, height: 8)
+        VStack(spacing: 12) {
+            HStack {
+                Button(action: { moveWeek(-1) }) {
+                    Image(systemName: "chevron.left")
+                        .foregroundStyle(ZhymPalette.accent)
+                        .padding(8)
+                        .background(Circle().fill(ZhymPalette.slate))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(entry.status == .today ? ZhymPalette.overlay : ZhymPalette.surface)
-                )
+                Spacer()
+                Text(monthTitle)
+                    .font(ZhymTypography.label(14, weight: .medium))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button(action: { moveWeek(1) }) {
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(ZhymPalette.accent)
+                        .padding(8)
+                        .background(Circle().fill(ZhymPalette.slate))
+                }
+            }
+            HStack(spacing: 10) {
+                ForEach(entries) { entry in
+                    Button {
+                        selectDate(entry.date)
+                    } label: {
+                        VStack(spacing: 6) {
+                            Text(dayLabelFormatter.string(from: entry.date).uppercased())
+                                .font(ZhymTypography.label(12, weight: Calendar.current.isDate(entry.date, inSameDayAs: selectedDate) ? .semibold : .regular))
+                                .foregroundStyle(Calendar.current.isDate(entry.date, inSameDayAs: selectedDate) ? .white : ZhymPalette.accent)
+                            Text(dayNumber(from: entry.date))
+                                .font(ZhymTypography.numeric(20))
+                                .foregroundStyle(entry.status.color)
+                            Circle()
+                                .fill(entry.status == .rest ? ZhymPalette.accent.opacity(0.3) : entry.status.color)
+                                .frame(width: 8, height: 8)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Calendar.current.isDate(entry.date, inSameDayAs: selectedDate) ? ZhymPalette.slate.opacity(0.9) : ZhymPalette.slate.opacity(0.5))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
+    }
+
+    private var monthTitle: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: selectedDate)
     }
 
     private func dayNumber(from date: Date) -> String {
@@ -272,98 +766,8 @@ private struct DayTimelineView: View {
     }
 }
 
-private struct PlanOverviewCard: View {
-    let plan: TrainingPlan?
-    let session: WorkoutSession?
-    let profile: ZhymUserProfile?
-    let lastLog: WorkoutLog?
-    let openGuide: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(weekSubtitle)
-                        .font(ZhymTypography.label(13))
-                        .foregroundStyle(ZhymPalette.accent)
-                    Text("TODAY'S WORKOUT")
-                        .font(ZhymTypography.label(18, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(session?.focus ?? "Recovery emphasis")
-                        .font(ZhymTypography.display(26))
-                        .foregroundStyle(ZhymPalette.highlight)
-                }
-                Spacer()
-                Button(action: openGuide) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(ZhymPalette.highlight)
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 14).fill(ZhymPalette.overlay))
-                }
-            }
-
-            if let plan {
-                HStack(spacing: 12) {
-                    Text("Split: \(plan.split.rawValue)")
-                    Text("Sessions: \(plan.sessions.count)/wk")
-                }
-                .font(ZhymTypography.label(14))
-                .foregroundStyle(ZhymPalette.accent)
-            } else {
-                Text("Generate a plan to unlock personalized training and fuel guidance.")
-                    .font(ZhymTypography.label(14))
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-
-            if let log = lastLog {
-                Text("Last: \(log.sessionName) · \(relativeString(log.completedAt))")
-                    .font(ZhymTypography.label(13))
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-        }
-        .zhymCard()
-    }
-
-    private var weekSubtitle: String {
-        guard let plan, let profile else { return "Week • Foundations" }
-        let phase: String
-        switch profile.trainingPreferences.objective {
-        case .muscle: phase = "Hypertrophy"
-        case .fatLoss: phase = "Recomp"
-        case .strength: phase = "Foundations"
-        case .balance: phase = "Performance"
-        }
-        return "Week \(plan.week)/5 · \(phase)"
-    }
-}
-
-private struct SessionStatRow: View {
-    let stats: [SessionStat]
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ForEach(stats) { stat in
-                VStack(alignment: .leading, spacing: 6) {
-                    Image(systemName: stat.icon)
-                        .foregroundStyle(ZhymPalette.highlight)
-                    Text(stat.value)
-                        .font(ZhymTypography.display(26))
-                        .foregroundStyle(.white)
-                    Text(stat.label)
-                        .font(ZhymTypography.label(13))
-                        .foregroundStyle(ZhymPalette.accent)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: 20).fill(ZhymPalette.surface))
-            }
-        }
-    }
-}
-
 private struct SessionStat: Identifiable {
-    let id = UUID()
+    let id: UUID
     let icon: String
     let value: String
     let label: String
@@ -373,9 +777,9 @@ private struct SessionStat: Identifiable {
         let duration = estimatedDuration(for: session)
         let calories = estimatedCalories(for: session, profile: profile)
         return [
-            SessionStat(icon: "bolt.fill", value: "\(exerciseCount)", label: "Exercises"),
-            SessionStat(icon: "clock.fill", value: "\(duration) min", label: "Duration"),
-            SessionStat(icon: "flame.fill", value: "\(calories) cal", label: "Energy")
+            SessionStat(id: UUID(), icon: "bolt.fill", value: "\(exerciseCount)", label: "Exercises"),
+            SessionStat(id: UUID(), icon: "clock.fill", value: "\(duration) min", label: "Duration"),
+            SessionStat(id: UUID(), icon: "flame.fill", value: "\(calories) cal", label: "Energy")
         ]
     }
 
@@ -388,149 +792,6 @@ private struct SessionStat: Identifiable {
         let sets = Double(session.exercises.map(\.sets).reduce(0, +))
         let weight = profile?.metrics.weightKg ?? 78
         return Int((sets * 6.5) + Double(weight) * 1.2)
-    }
-}
-
-private struct WarmupCard: View {
-    let openGuide: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(ZhymPalette.overlay)
-                .frame(width: 56, height: 56)
-                .overlay(
-                    Image(systemName: "figure.cooldown")
-                        .font(.system(size: 28, weight: .regular))
-                        .foregroundStyle(ZhymPalette.highlight)
-                )
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("General Warmup")
-                    .font(ZhymTypography.label(16, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("6 min mobility, 90s bike")
-                    .font(ZhymTypography.label(13))
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-            Spacer()
-            Button(action: openGuide) {
-                Image(systemName: "ellipsis")
-                    .rotationEffect(.degrees(90))
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-        }
-        .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(ZhymPalette.surface))
-    }
-}
-
-private struct ExerciseStack: View {
-    let session: WorkoutSession
-    let viewGuide: (ExercisePrescription) -> Void
-    let startWorkout: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(Array(session.exercises.enumerated()), id: \.element.id) { pair in
-                if pair.offset == 0 {
-                    ExerciseHeroCard(exercise: pair.element, viewGuide: viewGuide)
-                } else {
-                    ExerciseTile(exercise: pair.element, viewGuide: viewGuide)
-                }
-            }
-
-            Button("Start Workout") {
-                startWorkout()
-            }
-            .buttonStyle(.primaryZhym)
-        }
-    }
-}
-
-private struct ExerciseHeroCard: View {
-    let exercise: ExercisePrescription
-    let viewGuide: (ExercisePrescription) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(
-                        LinearGradient(colors: [ZhymPalette.blueAccent, ZhymPalette.overlay], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(height: 220)
-                    .overlay(
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(exercise.name)
-                                .font(ZhymTypography.display(30))
-                                .foregroundStyle(.white)
-                            Text(exercise.intent)
-                                .font(ZhymTypography.label(14))
-                                .foregroundStyle(ZhymPalette.accent)
-                        }
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(maxHeight: .infinity, alignment: .bottomLeading)
-                    )
-                Button(action: { viewGuide(exercise) }) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .background(Circle().fill(ZhymPalette.highlight.opacity(0.35)))
-                        .padding(12)
-                }
-            }
-
-            HStack {
-                Text("\(exercise.sets) sets · \(exercise.reps)")
-                    .font(ZhymTypography.label(15, weight: .medium))
-                    .foregroundStyle(.white)
-                Spacer()
-                Button {
-                    viewGuide(exercise)
-                } label: {
-                    Label("Guide", systemImage: "info.circle")
-                        .font(ZhymTypography.label(14))
-                        .foregroundStyle(ZhymPalette.highlight)
-                }
-            }
-        }
-        .zhymCard()
-    }
-}
-
-private struct ExerciseTile: View {
-    let exercise: ExercisePrescription
-    let viewGuide: (ExercisePrescription) -> Void
-
-    var body: some View {
-        HStack(spacing: 16) {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(ZhymPalette.overlay)
-                .frame(width: 60, height: 60)
-                .overlay(
-                    Image(systemName: "figure.strengthtraining.functional")
-                        .font(.system(size: 28))
-                        .foregroundStyle(ZhymPalette.highlight)
-                )
-            VStack(alignment: .leading, spacing: 4) {
-                Text(exercise.name)
-                    .font(ZhymTypography.label(16, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("\(exercise.sets)x \(exercise.reps) · \(exercise.intent)")
-                    .font(ZhymTypography.label(13))
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-            Spacer()
-            Button(action: { viewGuide(exercise) }) {
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(ZhymPalette.accent)
-            }
-        }
-        .padding(18)
-        .background(RoundedRectangle(cornerRadius: 22).fill(ZhymPalette.surface))
     }
 }
 
@@ -629,6 +890,7 @@ private struct MacroHighlight: View {
 struct SessionRunnerView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @State private var sessionIndex: Int = 0
     @State private var exerciseIndex: Int = 0
     @State private var restRemaining: Double = 0
@@ -654,9 +916,21 @@ struct SessionRunnerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("Train")
-                .font(ZhymTypography.display(44))
-                .foregroundStyle(.white)
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(ZhymPalette.highlight)
+                        .padding(10)
+                        .background(Circle().fill(ZhymPalette.surface))
+                }
+                Text("Train")
+                    .font(ZhymTypography.display(32))
+                    .foregroundStyle(.white)
+                Spacer()
+            }
 
             if sessionCompleted, let completed = lastCompletedSession {
                 SessionCompleteView(session: completed, nextSession: currentSession, proceed: prepareNextSession)
@@ -723,7 +997,7 @@ struct SessionRunnerView: View {
             Spacer()
         }
         .padding(24)
-        .background(ZhymPalette.charcoal.ignoresSafeArea())
+        .background(ZhymPalette.background.ignoresSafeArea())
         .onAppear {
             setSessionIndex(appState.activeSessionIndex)
             if restTargetDate == nil {
@@ -1032,33 +1306,40 @@ struct ExerciseCatalogView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Curated library")
+                        .font(ZhymTypography.label(14))
+                        .foregroundStyle(ZhymPalette.accent)
+                    HStack {
                         Text("Exercises")
-                            .font(ZhymTypography.display(38))
+                            .font(ZhymTypography.display(44))
                             .foregroundStyle(.white)
-                        Text("Browse 200+ guided movements with form cues and swaps.")
-                            .font(ZhymTypography.label(15))
-                            .foregroundStyle(ZhymPalette.accent)
+                        Spacer()
+                        Button("Smart session") {
+                            startSession()
+                        }
+                        .buttonStyle(.secondaryZhym)
+                        .frame(width: 150)
                     }
-                    Spacer()
-                    Button("Start smart session") {
-                        startSession()
-                    }
-                    .buttonStyle(.secondaryZhym)
+                    Text("200+ guided movements with cinematic cues and elite swaps.")
+                        .font(ZhymTypography.label(15))
+                        .foregroundStyle(ZhymPalette.accent)
                 }
 
-                HStack(spacing: 12) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(ZhymPalette.accent)
-                    TextField("Search movements", text: $searchText)
-                        .textInputAutocapitalization(.never)
-                        .foregroundStyle(.white)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(ZhymPalette.slate.opacity(0.6))
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(ZhymPalette.accent)
+                        TextField("Search movements", text: $searchText)
+                            .textInputAutocapitalization(.never)
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 12)
                 }
-                .padding(.vertical, 12)
-                .padding(.horizontal, 16)
-                .background(RoundedRectangle(cornerRadius: 16).fill(ZhymPalette.surface))
+                .frame(height: 48)
 
                 FilterMenus(selectedEquipment: $selectedEquipment, selectedMuscle: $selectedMuscle, selectedLevel: $selectedLevel)
 
@@ -1070,7 +1351,10 @@ struct ExerciseCatalogView: View {
             }
             .padding(24)
         }
-        .background(ZhymPalette.background.ignoresSafeArea())
+        .background(
+            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.abyss], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+        )
         .sheet(item: $activeGuide) { guide in
             ExerciseGuideSheet(guide: guide)
         }
@@ -1226,6 +1510,7 @@ struct ProgramLibraryView: View {
     @State private var selectedEquipment: EquipmentFilter = .all
     @State private var selectedMuscle: MuscleFilter = .all
     @State private var selectedDuration: DurationFilter = .three
+    @State private var activeProgram: ProgramLibraryItem?
 
     private var filteredPrograms: [ProgramLibraryItem] {
         ProgramLibraryItem.demo.filter { item in
@@ -1237,13 +1522,16 @@ struct ProgramLibraryView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 26) {
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
+                        Text("Program gallery")
+                            .font(ZhymTypography.label(14))
+                            .foregroundStyle(ZhymPalette.accent)
                         Text("Library")
-                            .font(ZhymTypography.display(38))
+                            .font(ZhymTypography.display(40))
                             .foregroundStyle(.white)
-                        Text("Plug-and-play programs curated by Zhym coaches.")
+                        Text("Plug-and-play cycles curated by Zhym coaches.")
                             .font(ZhymTypography.label(15))
                             .foregroundStyle(ZhymPalette.accent)
                     }
@@ -1251,9 +1539,9 @@ struct ProgramLibraryView: View {
                     Label("Premium", systemImage: "crown.fill")
                         .font(ZhymTypography.label(13, weight: .semibold))
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(ZhymPalette.overlay))
-                        .foregroundStyle(ZhymPalette.highlight)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(ZhymPalette.slate.opacity(0.7)))
+                        .foregroundStyle(ZhymPalette.ember)
                 }
 
                 HStack(spacing: 12) {
@@ -1283,12 +1571,20 @@ struct ProgramLibraryView: View {
                 }
 
                 ForEach(filteredPrograms) { program in
-                    ProgramLibraryCard(program: program)
+                    ProgramLibraryCard(program: program) {
+                        activeProgram = program
+                    }
                 }
             }
             .padding(24)
         }
-        .background(ZhymPalette.background.ignoresSafeArea())
+        .background(
+            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.wine.opacity(0.4)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .ignoresSafeArea()
+        )
+        .sheet(item: $activeProgram) { program in
+            ProgramDetailSheet(program: program)
+        }
     }
 }
 
@@ -1325,6 +1621,7 @@ private struct ProgramLibraryItem: Identifiable {
 
 private struct ProgramLibraryCard: View {
     let program: ProgramLibraryItem
+    let preview: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1346,7 +1643,7 @@ private struct ProgramLibraryCard: View {
             .font(ZhymTypography.label(13))
             .foregroundStyle(.white)
 
-            Button("Preview cycle") {}
+            Button("Preview cycle", action: preview)
                 .buttonStyle(.primaryZhym)
         }
         .padding(24)
@@ -1359,6 +1656,40 @@ private struct ProgramLibraryCard: View {
     }
 }
 
+private struct ProgramDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let program: ProgramLibraryItem
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(program.subtitle)
+                    .font(ZhymTypography.display(32))
+                    .foregroundStyle(.white)
+                Text("Split: \(program.split)")
+                    .font(ZhymTypography.label(16))
+                    .foregroundStyle(.white)
+                Text("Days: \(program.days.displayName) • Focus: \(program.focus.displayName)")
+                    .font(ZhymTypography.label(14))
+                    .foregroundStyle(ZhymPalette.accent)
+                Text("Equipment: \(program.equipment.displayName)")
+                    .font(ZhymTypography.label(14))
+                    .foregroundStyle(ZhymPalette.accent)
+                Button("Add to Zhym plan") {}
+                    .buttonStyle(.primaryZhym)
+                Button("Close") { dismiss() }
+                    .buttonStyle(.secondaryZhym)
+            }
+            .padding(24)
+        }
+        .background(
+            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.abyss], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .ignoresSafeArea()
+        )
+    }
+}
+
+
 // MARK: - PROGRESS
 
 struct ProgressScreen: View {
@@ -1368,7 +1699,7 @@ struct ProgressScreen: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 26) {
                 Text("Progress")
                     .font(ZhymTypography.display(44))
                     .foregroundStyle(.white)
@@ -1797,8 +2128,8 @@ private struct NutritionSummaryCard: View {
                 .font(ZhymTypography.label(14))
                 .foregroundStyle(ZhymPalette.accent)
             HStack(spacing: 24) {
-                NutritionStat(icon: "leaf", title: "Calories", value: plan != nil ? "\(plan!.calories)" : "—")
-                NutritionStat(icon: "figure.flexibility", title: "Protein", value: plan != nil ? "\(plan!.protein)" : "—")
+                NutritionStat(icon: "leaf", title: "Calories", value: plan != nil ? "\(plan!.calories)" : "-")
+                NutritionStat(icon: "figure.flexibility", title: "Protein", value: plan != nil ? "\(plan!.protein)" : "-")
             }
             Text("Targets calculated from your goals and data. Tap to share with a coach.")
                 .font(ZhymTypography.label(13))
@@ -1975,10 +2306,11 @@ private struct HealthEducationStack: View {
 
 struct ProfileScreen: View {
     @EnvironmentObject private var appState: AppState
+    @State private var activeSetting: SettingAction?
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 Text("Settings")
                     .font(ZhymTypography.display(44))
                     .foregroundStyle(.white)
@@ -1990,13 +2322,19 @@ struct ProfileScreen: View {
                 }
 
                 SettingGroup(title: "Account") {
-                    SettingRowView(icon: "crown.fill", title: "My Subscription", subtitle: "Zhym Pro", actionText: "Manage")
+                    SettingRowView(icon: "crown.fill", title: "My Subscription", subtitle: "Zhym Pro", actionText: "Manage", action: {
+                        activeSetting = .subscription
+                    })
                     Divider().background(ZhymPalette.overlay)
-                    SettingRowView(icon: "bolt.fill", title: "Experience Level", subtitle: appState.activeProfile?.metrics.experience.rawValue ?? "Set level")
+                    SettingRowView(icon: "bolt.fill", title: "Experience Level", subtitle: appState.activeProfile?.metrics.experience.rawValue ?? "Set level", action: {
+                        activeSetting = .experience
+                    })
                 }
 
                 SettingGroup(title: "Preferences") {
-                    SettingRowView(icon: "ruler", title: "Units of Measurement", subtitle: "Metric")
+                    SettingRowView(icon: "ruler", title: "Units of Measurement", subtitle: "Metric", action: {
+                        activeSetting = .units
+                    })
                     Divider().background(ZhymPalette.overlay)
                     SmartToggleRow(title: "Smart Weight & Reps")
                 }
@@ -2010,7 +2348,25 @@ struct ProfileScreen: View {
             }
             .padding(24)
         }
-        .background(ZhymPalette.background.ignoresSafeArea())
+        .background(
+            LinearGradient(colors: [ZhymPalette.night, ZhymPalette.wine.opacity(0.4)], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+        )
+        .sheet(item: $activeSetting) { selection in
+            SettingDetailSheet(action: selection)
+        }
+    }
+}
+
+private enum SettingAction: String, Identifiable {
+    case subscription, experience, units
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .subscription: return "Subscription"
+        case .experience: return "Experience Level"
+        case .units: return "Units of Measurement"
+        }
     }
 }
 
@@ -2087,37 +2443,42 @@ private struct SettingRowView: View {
     let title: String
     let subtitle: String?
     var actionText: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(ZhymPalette.overlay)
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Image(systemName: icon)
-                        .foregroundStyle(ZhymPalette.highlight)
-                )
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(ZhymTypography.label(16, weight: .semibold))
-                    .foregroundStyle(.white)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(ZhymTypography.label(13))
-                        .foregroundStyle(ZhymPalette.accent)
+        Button(action: { action?() }) {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(ZhymPalette.overlay)
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Image(systemName: icon)
+                            .foregroundStyle(ZhymPalette.highlight)
+                    )
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(ZhymTypography.label(16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(ZhymTypography.label(13))
+                            .foregroundStyle(ZhymPalette.accent)
+                    }
                 }
+                Spacer()
+                if let actionText {
+                    Text(actionText)
+                        .font(ZhymTypography.label(13, weight: .semibold))
+                        .foregroundStyle(ZhymPalette.highlight)
+                }
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(ZhymPalette.accent)
             }
-            Spacer()
-            if let actionText {
-                Text(actionText)
-                    .font(ZhymTypography.label(13, weight: .semibold))
-                    .foregroundStyle(ZhymPalette.highlight)
-            }
-            Image(systemName: "chevron.right")
-                .foregroundStyle(ZhymPalette.accent)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .buttonStyle(.plain)
     }
 }
 
@@ -2148,6 +2509,26 @@ private struct SmartToggleRow: View {
     }
 }
 
+private struct SettingDetailSheet: View {
+    let action: SettingAction
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(action.title)
+                .font(ZhymTypography.display(32))
+                .foregroundStyle(.white)
+            Text("Detailed controls for \(action.title.lowercased()) will arrive soon. Tap manage to continue inside Zhym.")
+                .font(ZhymTypography.label(15))
+                .foregroundStyle(ZhymPalette.accent)
+                .multilineTextAlignment(.center)
+            Button("Close") {}
+                .buttonStyle(.primaryZhym)
+        }
+        .padding(32)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+}
+
 private let relativeFormatter: RelativeDateTimeFormatter = {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
@@ -2171,7 +2552,7 @@ private struct HealthEducationTopic: Identifiable {
     let description: String
 
     static let demoTopics: [HealthEducationTopic] = [
-        HealthEducationTopic(title: "Progressive overload stays gradual", description: "Volume increases are capped at 10–15% weekly to protect joints and keep youth athletes safe."),
+        HealthEducationTopic(title: "Progressive overload stays gradual", description: "Volume increases are capped at 10-15% weekly to protect joints and keep youth athletes safe."),
         HealthEducationTopic(title: "Sleep funds adaptation", description: "Sleep quality below 6/10 triggers recovery emphasis so tissue repair stays ahead of training."),
         HealthEducationTopic(title: "Protein supports growth", description: "Protein targets are set first to sustain muscle and hormone health even in Access Mode."),
         HealthEducationTopic(title: "Rest prevents injury", description: "Deload weeks auto-inserted every 4th week or sooner when check-ins flag fatigue.")
@@ -2184,6 +2565,18 @@ private let dayLabelFormatter: DateFormatter = {
     formatter.dateFormat = "E"
     return formatter
 }()
+
+
+private func sessionCounts(for logs: [WorkoutLog]) -> [(label: String, value: Double)] {
+    let calendar = Calendar.current
+    let today = calendar.startOfDay(for: Date())
+    return (0..<7).reversed().map { offset in
+        let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+        let label = dayLabelFormatter.string(from: day)
+        let count = Double(logs.filter { calendar.isDate($0.completedAt, inSameDayAs: day) }.count)
+        return (label, count)
+    }
+}
 
 private func setsCompletedThisWeek(logs: [WorkoutLog]) -> Int {
     let calendar = Calendar.current
