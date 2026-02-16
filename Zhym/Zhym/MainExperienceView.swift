@@ -2350,7 +2350,19 @@ struct ProfileScreen: View {
                 .ignoresSafeArea()
         )
         .sheet(item: $activeSetting) { selection in
-            SettingDetailSheet(action: selection)
+            switch selection {
+            case .subscription:
+                SubscriptionSheet()
+            case .experience:
+                ExperienceLevelSheet(current: appState.activeProfile?.metrics.experience ?? .intermediate) { newLevel in
+                    if var profile = appState.activeProfile {
+                        profile.metrics.experience = newLevel
+                        appState.configureProfile(profile)
+                    }
+                }
+            case .units:
+                UnitsSelectionSheet()
+            }
         }
     }
 }
@@ -2358,13 +2370,6 @@ struct ProfileScreen: View {
 private enum SettingAction: String, Identifiable {
     case subscription, experience, units
     var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .subscription: return "Subscription"
-        case .experience: return "Experience Level"
-        case .units: return "Units of Measurement"
-        }
-    }
 }
 
 private struct PromoCard: View {
@@ -2506,22 +2511,77 @@ private struct SmartToggleRow: View {
     }
 }
 
-private struct SettingDetailSheet: View {
-    let action: SettingAction
+private struct SubscriptionSheet: View {
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text(action.title)
-                .font(ZhymTypography.display(32))
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Zhym Pro")
+                .font(ZhymTypography.display(34))
                 .foregroundStyle(.white)
-            Text("Detailed controls for \(action.title.lowercased()) will arrive soon. Tap manage to continue inside Zhym.")
+            Text("Access elite programming, weekly recalibration calls, and wearable integrations.")
                 .font(ZhymTypography.label(15))
                 .foregroundStyle(ZhymPalette.accent)
-                .multilineTextAlignment(.center)
-            Button("Close") {}
+            Button("Manage in App Store") {
+                dismiss()
+            }
+            .buttonStyle(.primaryZhym)
+        }
+        .padding(28)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+}
+
+private struct ExperienceLevelSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: TrainingExperience
+    let apply: (TrainingExperience) -> Void
+
+    init(current: TrainingExperience, apply: @escaping (TrainingExperience) -> Void) {
+        self._selected = State(initialValue: current)
+        self.apply = apply
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Experience Level")
+                .font(ZhymTypography.display(32))
+                .foregroundStyle(.white)
+            Picker("Experience", selection: $selected) {
+                ForEach(TrainingExperience.allCases) { level in
+                    Text(level.rawValue).tag(level)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Button("Apply") {
+                apply(selected)
+                dismiss()
+            }
+            .buttonStyle(.primaryZhym)
+        }
+        .padding(28)
+        .background(ZhymPalette.background.ignoresSafeArea())
+    }
+}
+
+private struct UnitsSelectionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var useMetric = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Units")
+                .font(ZhymTypography.display(32))
+                .foregroundStyle(.white)
+            Toggle("Metric (kg / cm)", isOn: $useMetric)
+                .toggleStyle(SwitchToggleStyle(tint: ZhymPalette.highlight))
+            Toggle("Imperial (lb / in)", isOn: Binding(get: { !useMetric }, set: { useMetric = !$0 }))
+                .toggleStyle(SwitchToggleStyle(tint: ZhymPalette.highlight))
+            Button("Save") { dismiss() }
                 .buttonStyle(.primaryZhym)
         }
-        .padding(32)
+        .padding(28)
         .background(ZhymPalette.background.ignoresSafeArea())
     }
 }
