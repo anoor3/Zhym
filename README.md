@@ -2,6 +2,9 @@
 
 ZHYM is a SwiftUI iOS app prototype for adaptive training, nutrition guidance, and discipline tracking. It onboards a user, generates a personalized training + fueling plan from deterministic engines, and then guides daily execution through a tabbed experience (`Today`, `Train`, `Fuel`, `Progress`, `Profile`).
 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Abdullah%20Noor-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/abdullah-noor1/)
+[![Email](https://img.shields.io/badge/Email-abdullahnoorllc%40gmail.com-EA4335?logo=gmail&logoColor=white)](mailto:abdullahnoorllc@gmail.com)
+
 ---
 
 ## What this app is about
